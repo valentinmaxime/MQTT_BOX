@@ -3,7 +3,7 @@
  * @Date:   2018-03-18T19:13:16+01:00
  * @Project: MQTT_CLIENT
  * @Last modified by:
- * @Last modified time: 2018-05-25T15:12:26+02:00
+ * @Last modified time: 2018-05-25T15:29:24+02:00
  */
 
 /* Here ESP32 will keep 3 roles:
@@ -24,7 +24,7 @@ So it willpublish temperature/humidity topic and scribe topic bulb on/off
 #include "GravityTDS.h"
 
 // the OLED used
-U8X8_SSD1306_128X64_NONAME_SW_I2C u8x8(/* clock=*/ 15, /* data=*/ 4, /* reset=*/ 16);
+U8X8_SSD1306_128X64_NONAME_SW_I2C u8x8(/* clock=*/ 16, /* data=*/ 4, /* reset=*/ 16);
 
 /* change it with ssid-password */
 const char* ssid = "Camion wifi nsa";
