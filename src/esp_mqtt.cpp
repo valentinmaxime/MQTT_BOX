@@ -3,7 +3,7 @@
  * @Date:   2018-03-18T19:13:16+01:00
  * @Project: MQTT_CLIENT
  * @Last modified by:
- * @Last modified time: 2018-05-23T23:48:43+02:00
+ * @Last modified time: 2018-05-25T15:12:26+02:00
  */
 
 /* Here ESP32 will keep 3 roles:
