@@ -3,7 +3,7 @@
  * @Date:   2018-03-18T19:13:16+01:00
  * @Project: MQTT_CLIENT
  * @Last modified by:
- * @Last modified time: 2018-05-25T15:29:24+02:00
+ * @Last modified time: 2018-06-08T15:50:52+02:00
  */
 
 /* Here ESP32 will keep 3 roles:
@@ -22,44 +22,10 @@ So it willpublish temperature/humidity topic and scribe topic bulb on/off
 #include <DallasTemperature.h>
 #include <dht.h>
 #include "GravityTDS.h"
-
-// the OLED used
-U8X8_SSD1306_128X64_NONAME_SW_I2C u8x8(/* clock=*/ 16, /* data=*/ 4, /* reset=*/ 16);
-
-/* change it with ssid-password */
-const char* ssid = "Camion wifi nsa";
-const char* password = "vibestyle92";
-
-/* this is the IP of PC/raspberry where MQTT Server is installed
-on Wins use "ipconfig"
-on Linux use "ifconfig" to get its IP address */
-const char* mqtt_server = "192.168.1.11";
-
-/* define pins */
-#define DHTPIN 21
-#define DHTPIN1 13
-#define DHTTYPE DHT22
-#define ONE_WIRE_BUS 22 // DS18B20 pin
-#define TDSPIN 37
-
-/* define pins */
-float txValue = 0;
-const int EV1 = 2; // Pin for Solenoid 1
-const int EV2 = 4; // Pin for Solenoid 2
-const int EV3 = 16; // Pin for Solenoid 3
-const int EV4  = 17; // pin for relay
-const int AC  = 15; // pin for relay
-const int PH = 38;
-
-/* Define PH */
-float calibration = 0.1; //change this value to calibrate
-
-/* Init gravity sensor*/
-GravityTDS gravityTds;
-
-/* Init DHT sensors */
-dht dht0;
-dht dht1;
+#include <driver/adc.h>
+#include <Conf/conf.h>
+#include <Math/avergearray.h>
+#include <Conf/dataRepository.h>
 
 float temperature = 0;
 float humidity = 0;
@@ -68,24 +34,69 @@ float humidity1 = 0;
 float analogTemp = 0; // Dallas temperature sensor
 float tdsValue = 0; // TDS
 float phValue = 0; // PH sensor
+int cycleCpt=0; // counter to wait cycles execution
+long lastMsg = 0; // time retrieved since last message
+char msg[100]; // message to send over mqtt
 
-/* initialization of Dallas temperature sensor */
+/* Init gravity sensor*/
+GravityTDS gravityTds;
+
+/* Init DHT sensors */
+dht dht0;
+dht dht1;
+
+/* Initialization of Dallas temperature sensor */
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature DS18B20(&oneWire);
+
+// Initialization of the OLED used
+U8X8_SSD1306_128X64_NONAME_SW_I2C u8x8(/* clock=*/ 15, /* data=*/ 4, /* reset=*/ 16);
+
+/* Wait until sensors are intialized */
+bool isSensorInitialized = false;
 
 /* create an instance of PubSubClient client */
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-/* topics */
-#define CAPT_TOPIC    "box/capt"
-#define LIGHT_TOPIC     "box/trigger" /* 1=on, 0=off */
 
-long lastMsg = 0;
-char msg[100];
+void mqttconnect() {
 
-/* counter to wait cycles execution*/
-int cpt=0;
+  /* Loop until reconnected */
+  while (!client.connected() && (cycleCpt < 5) ) {
+      Serial.print("MQTT connecting ...");
+      u8x8.println("MQTT connecting ...");
+
+      /* client ID */
+      String clientId = "ESP32Client";
+
+      /* connect now */
+      if (client.connect(clientId.c_str())) {
+        Serial.println("connected");
+        u8x8.println("connected");
+
+        /* subscribe topic with default QoS 0*/
+        client.subscribe(LIGHT_TOPIC);
+
+        u8x8.clearDisplay();
+
+      } else {
+
+        Serial.print("failed, status code =");
+        Serial.print(client.state());
+        Serial.println("try again in 5 seconds");
+        u8x8.println("failed, status code =");
+        u8x8.println(client.state());
+        u8x8.println("try again in 5 seconds");
+        /* Wait 5 seconds before retrying */
+        delay(5000);
+        /* 5 retries max */
+        cycleCpt++;
+      }
+    }
+}
+
+
 
 void receivedCallback(char* topic, byte* payload, unsigned int length) {
 
@@ -104,7 +115,6 @@ void receivedCallback(char* topic, byte* payload, unsigned int length) {
   payloadTruncate[length] = '\0';
 
   Serial.println(payloadTruncate);
-  u8x8.drawString(0, 3,payloadTruncate);
 
   /* truncate message*/
   char* event = strtok(payloadTruncate, ";");
@@ -153,42 +163,6 @@ void receivedCallback(char* topic, byte* payload, unsigned int length) {
 
 }
 
-void mqttconnect() {
-
-  /* Loop until reconnected */
-  while (!client.connected() && (cpt < 5) ) {
-      Serial.print("MQTT connecting ...");
-      u8x8.println("MQTT connecting ...");
-
-      /* client ID */
-      String clientId = "ESP32Client";
-
-      /* connect now */
-      if (client.connect(clientId.c_str())) {
-        Serial.println("connected");
-        u8x8.println("connected");
-
-        /* subscribe topic with default QoS 0*/
-        client.subscribe(LIGHT_TOPIC);
-
-        u8x8.clearDisplay();
-
-      } else {
-
-        Serial.print("failed, status code =");
-        Serial.print(client.state());
-        Serial.println("try again in 5 seconds");
-        u8x8.println("failed, status code =");
-        u8x8.println(client.state());
-        u8x8.println("try again in 5 seconds");
-        /* Wait 5 seconds before retrying */
-        delay(5000);
-        /* 5 retries max */
-        cpt++;
-      }
-    }
-}
-
 void setup() {
 
   Serial.begin(115200);
@@ -209,20 +183,20 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
-  int cpt=0;
-
   /* 32x500ms = 16 sec to connect until reset */
-  while ( (WiFi.status() != WL_CONNECTED) && (cpt < 32) ) {
+  while ( (WiFi.status() != WL_CONNECTED) && (cycleCpt < 32) ) {
     delay(500);
     Serial.print(".");
     u8x8.print(".");
-    cpt++;
+    cycleCpt++;
   }
 
-  /*reset*/
-  if (cpt >= 32){
+  /* Reset module if there is too many tries */
+  if (cycleCpt >= 32){
     esp_restart();
   }
+
+  cycleCpt = 0;
 
   /* set led as output to control AC/EV */
   pinMode(EV1, OUTPUT);
@@ -248,8 +222,6 @@ void setup() {
   when client received subscribed topic */
   client.setCallback(receivedCallback);
 
-
-
   /* initialize ppm parameters */
   gravityTds.setPin(TDSPIN);
   gravityTds.setAref(5.0);  //reference voltage on ADC, default 5.0V on Arduino UNO
@@ -258,8 +230,8 @@ void setup() {
 
 }
 
-void loop() {
 
+void loop() {
 
   /* if client was disconnected then try to reconnect again */
   if (!client.connected()) {
@@ -269,29 +241,47 @@ void loop() {
   subscribed topic-process-invoke receivedCallback */
   client.loop();
 
+  if ( cycleCpt < 32 && !isSensorInitialized ) {
+    delay(500);
+    Serial.print(".");
+    u8x8.print(".");
+    cycleCpt++;
+  }
 
+  /***********************/
+  /* Retrieving PH data  */
+  /***********************/
+  static unsigned long samplingTime = millis();
+  static unsigned long printTime = millis();
+  static float pHValue,voltage;
 
-  /* we measure temperature every 3 secs
+  if(millis()-samplingTime > samplingInterval){
+
+    pHArray[pHArrayIndex++]=analogRead(PH);
+
+    if(pHArrayIndex==ArrayLenth){
+      pHArrayIndex=0;
+    }
+    /* PH Value calculation  */
+    voltage = avergearray(pHArray, ArrayLenth)*5/4096;
+    phValue = 3.5 * voltage + calibration;
+    samplingTime=millis();
+  }
+  if(millis() - printTime > printInterval){
+    printTime=millis();
+  }
+  /**************************/
+  /* END retrieving PH data */
+  /**************************/
+
+  /* we measure temperature every x secs
   we count until 5 secs reached to avoid blocking program if using delay()*/
   long now = millis();
   if (now - lastMsg > 8000) {
 
-    int measure = analogRead(PH);
-    Serial.print("Measure: ");
-    Serial.print(measure);
-
-    float voltage=(float)measure*5.0/1024;
-    Serial.print("\tVoltage: ");
-    Serial.print(voltage, 3);
-
-    phValue = 3.5 * voltage * calibration;
-    Serial.print("\tPH: ");
-    Serial.print(phValue, 3);
-    Serial.print("\n");
-
     lastMsg = now;
 
-    /* temperature for calibration    */
+    /* temperature for TDS calibration    */
     DS18B20.requestTemperatures();
     analogTemp = DS18B20.getTempCByIndex(0);
 
@@ -315,12 +305,21 @@ void loop() {
     gravityTds.update();  //sample and calculate
     tdsValue = gravityTds.getTdsValue();  // then get the value
 
+   if (!isnan(temperature) &&
+    !(temperature < 0) && !(humidity < 0)  &&
+    !(temperature1 < 0) && !(humidity1 < 0)  &&
+    !isnan(temperature1) && analogTemp < 80 &&
+    (temperature < 50) && (humidity < 110)  &&
+    (temperature1 < 50) && (humidity1 < 110)   ) {
+
     /*msg+= "TMP:XX.XX;HUM:XX"*/
-    snprintf (msg, 70, "TMP:%.2f;HUM:%.2f;TMP1:%.2f;HUM1:%.2f;ATEMP:%.2f;TDS:%.2f;PH:%.2f", temperature, humidity, temperature1, humidity1,analogTemp,tdsValue,phValue);
+    snprintf (msg, 75, "TMP:%.2f;HUM:%.2f;TMP1:%.2f;HUM1:%.2f;ATEMP:%.2f;TDS:%.2f;PH:%.2f", temperature, humidity, temperature1, humidity1,analogTemp,tdsValue,phValue);
 
     Serial.println(msg);
 
-   if (!isnan(temperature) && !(temperature < 0) && !(humidity < 0)  && !(temperature1 < 0) && !(humidity1 < 0)  && !isnan(temperature1) && analogTemp < 80) {
+    isSensorInitialized = true;
+    u8x8.clearLine(0);
+
     char part1[20];
     char part2[10];
     char part3[10];
@@ -341,7 +340,6 @@ void loop() {
     u8x8.drawString(0, 4, part4);
     u8x8.drawString(0, 5, part5);
     u8x8.drawString(0, 6, part6);
-
 
       /* publish the message */
       client.publish(CAPT_TOPIC, msg);
